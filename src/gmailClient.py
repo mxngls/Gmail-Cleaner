@@ -10,6 +10,7 @@ from google.oauth2.credentials import Credentials
 
 SCOPES = ['https://mail.google.com/']
 APPLICATION_NAME = 'Gmail API Python'
+PORT_URI='8080'
 
 # Deletes all the e-mails sent from a specific adress that us chosen by the user.
   
@@ -38,7 +39,7 @@ class GmailClient:
                 creds.refresh(Request())
             else:
                 flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
+                creds = flow.run_local_server(port=PORT_URI)
         
             # Save the credentials for the next run
             with open('token.json', 'w') as token:
