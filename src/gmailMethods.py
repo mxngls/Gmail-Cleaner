@@ -180,7 +180,7 @@ class GmailMethod:
 
 			while 'nextPageToken' in response:
 				page_token = response['nextPageToken']
-				response = self.google_client.service.users().messages().list(
+				response = self.gmailclient.service.users().messages().list(
 				    userId="me", labelIds=label_Id, pageToken=page_token).execute()
 				if 'messages' in response:
 					for message in response['messages']:
