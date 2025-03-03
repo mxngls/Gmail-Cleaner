@@ -1,16 +1,17 @@
-from gmailMethods import GmailMethod
-from collections import Counter
 import sys
 import re
+
+from gmailMethods import GmailMethod
+from collections import Counter
+
 from tqdm import tqdm
-from pprint import pprint
+
 
 def main():
-
+    """Main function to run the Gmail Cleaner."""
     gmail = GmailMethod()
 
     while True:
-
         print("""
 1. Show the most common senders
 2. Move messages from a specific sender to trash
@@ -21,128 +22,181 @@ def main():
 7. Permanently delete all messages in trash
 8. Exit
         """)
-        
-        try:
 
-            user_choice = int(input('Choose an option: '))
+        try:
+            user_choice = int(input("Choose an option: "))
 
             if user_choice == 1:
-                '''
-                1. Show the most common senders
-                '''
+                # Show the most common senders
+                if not gmail.users:
+                    gmail.batch_get(gmail.list_messages("me"))
 
-                if len(gmail.users) == 0:
-                    gmail.batch_get(gmail.list_messages('me'))
-                
-                gmail.users = Counter(gmail.users).items()
-                gmail.users = [user for user in sorted(gmail.users, key = lambda user: user[1], reverse=True)]
-                user_choice_users = int(input('How much senders do you want to get displayed?' + '\n'))
+                sender_counts = Counter(gmail.users).most_common()
+                num_senders = int(input("How many senders do you want to display? "))
 
-                print('You have:')
+                print("You have:")
+                gmail.total_from_users = 0
 
-                for i in range(0, user_choice_users):
-                    match = re.search("(?<=<)(.*)(?=>)" , gmail.users[i][0]).group()
-                    if match is None:
-                        gmail.total_from_users += int(gmail.users[i][1])
-                        print(f'- {gmail.users[i][1]} e-mails from {gmail.users[i][0]}.')
-                    else:
-                        gmail.total_from_users += int(gmail.users[i][1])
-                        print(f'- {gmail.users[i][1]} e-mails from {match}.')
+                for i, (sender, count) in enumerate(sender_counts[:num_senders]):
+                    # Extract email from sender string
+                    email_match = re.search(r"(?<=<)(.*)(?=>)", sender)
+                    display_sender = email_match.group() if email_match else sender
 
-                print(f'In total you have {gmail.total_messages} e-mails. {gmail.total_from_users} of these are from the {user_choice_users} users you specified.')
+                    gmail.total_from_users += count
+                    print(f"- {count} e-mails from {display_sender}.")
 
-            elif user_choice == 2:	
-                '''
-                2. Move messages from a specific sender to trash
-                '''
-                user_choice_sender = str(input('Choose sender whose messages you want to delete.' + '\n'))
+                print(
+                    f"In total you have {gmail.total_messages} e-mails. "
+                    f"{gmail.total_from_users} of these are from the {num_senders} users you specified."
+                )
 
-                for message in tqdm(gmail.list_messages_matching_query('me', 'from:' + user_choice_sender)):
-                    gmail.delete_message('me', message)
-                    gmail.moved_to_trash += 1
-                print(f'Process deleting e-mails from {user_choice_sender} completed. All {gmail.moved_to_trash} e-mails have been moved to the trash.')
+            elif user_choice == 2:
+                # Move messages from sender to trash
+                sender = input("Choose sender whose messages you want to delete: ")
+                messages = gmail.list_messages_matching_query("me", f"from:{sender}")
+
+                if not messages:
+                    print(f"No messages found from {sender}")
+                    continue
+
                 gmail.moved_to_trash = 0
+                for message in tqdm(messages, desc=f"Deleting emails from {sender}"):
+                    gmail.delete_message("me", message)
+
+                print(
+                    f"Process deleting e-mails from {sender} completed. "
+                    f"All {gmail.moved_to_trash} e-mails have been moved to the trash."
+                )
 
             elif user_choice == 3:
-                '''
-                3. Move messages from a specific sender to the spam folder
-                '''
-                user_choice_sender = str(input('Choose sender whose messages you want to move into spam.' + '\n'))
+                # Move messages from sender to spam
+                sender = input(
+                    "Choose sender whose messages you want to move into spam: "
+                )
+                messages = gmail.list_messages_matching_query("me", f"from:{sender}")
 
-                for message in tqdm((gmail.list_messages_matching_query('me', 'from:' + user_choice_sender))):
-                    gmail.move_to_spam('me', message)
-                    gmail.moved_to_spam += 1
-                print(f'Moved {gmail.moved_to_spam} e-mails to the spam folder.')
+                if not messages:
+                    print(f"No messages found from {sender}")
+                    continue
+
                 gmail.moved_to_spam = 0
+                for message in tqdm(messages, desc="Moving emails to spam"):
+                    gmail.move_to_spam("me", message)
+
+                print(f"Moved {gmail.moved_to_spam} e-mails to the spam folder.")
 
             elif user_choice == 4:
-                '''
-                4. Move messages matching from spam to trash
-                '''
-                for message in tqdm(gmail.list_messages_matching_label('me', 'SPAM')):	
-                    gmail.delete_message('me', message)
-                    gmail.moved_to_trash += 1
-                print(f'Emptied spam. All {gmail.moved_to_trash} e-mails have been moved to trash.')
-                gmail.moved_to_trash = 0
+                # Move all spam to trash
+                messages = gmail.list_messages_matching_label("me", "SPAM")
 
-            elif user_choice == 5:	
-                '''
-                5. Move messages matching a specific label to trash
-                '''
-                if input("Do you know all your label-id's?" + '\n') == 'No' or 'no':
-                    print('You got these labels:' + '\n')
-                    for label in gmail.list_labels('me'):
-                        print(f"Label: {label['name']}; Id: {label['id']}")
-                user_choice_label = str(input('Messages matchig what label-id do you want to delete?' + '\n'))				
+                if not messages:
+                    print("No messages found in spam")
+                    continue
 
-                for message in tqdm(gmail.list_messages_matching_label('me', user_choice_label)):	
-                    gmail.delete_message('me', message)
-                    gmail.moved_to_trash += 1
-                print(f'Emptied spam. All {gmail.moved_to_trash} e-mails have been moved to trash.')
                 gmail.moved_to_trash = 0
+                for message in tqdm(messages, desc="Moving spam to trash"):
+                    gmail.delete_message("me", message)
+
+                print(
+                    f"Emptied spam. All {gmail.moved_to_trash} e-mails have been moved to trash."
+                )
+
+            elif user_choice == 5:
+                # Move messages with label to trash
+                if input("Do you know all your label IDs? (yes/no): ").lower() in [
+                    "no",
+                    "n",
+                ]:
+                    print("You have these labels:")
+                    for label in gmail.list_labels("me"):
+                        print(f"Label: {label['name']}; ID: {label['id']}")
+
+                label_id = input(
+                    "Messages matching what label ID do you want to delete? "
+                )
+                messages = gmail.list_messages_matching_label("me", label_id)
+
+                if not messages:
+                    print(f"No messages found with label ID {label_id}")
+                    continue
+
+                gmail.moved_to_trash = 0
+                for message in tqdm(messages, desc="Moving labeled messages to trash"):
+                    gmail.delete_message("me", message)
+
+                print(f"All {gmail.moved_to_trash} e-mails have been moved to trash.")
 
             elif user_choice == 6:
-                '''
-                6. Add a label to emails matching a specifed sender
-                '''
-                user_choice_label = str(input('What is the name of the label you want to attach?' + '\n'))				
-                user_choice_sender = str(input('Choose sender whose messages you want to attach this label to:' + '\n'))
+                # Add label to emails from sender
+                label_name = input("What is the name of the label you want to attach? ")
+                sender = input(
+                    "Choose sender whose messages you want to attach this label to: "
+                )
 
-                if gmail.label_check(gmail.list_labels('me'), user_choice_label) is False:
-                    label = gmail.create_label('me', user_choice_label)['id']
+                # Check if label exists, create if not
+                labels = gmail.list_labels("me")
+                if not gmail.label_check(labels, label_name):
+                    label_info = gmail.create_label("me", label_name)
+                    label_id = label_info["id"]
+                    print(f"Created new label: {label_name}")
                 else:
-                    for el in gmail.list_labels('me'):
-                        if el['name'] == user_choice_label:
-                            label = el.get('id')
+                    # Find the label ID
+                    label_id = next(
+                        label["id"] for label in labels if label["name"] == label_name
+                    )
 
-                messages = (gmail.list_messages_matching_query('me', 'from:' + user_choice_sender))
-                gmail.attach_label('me', label, messages)
-                gmail.labels = len(messages)
-                print(f'Attached the label: "{user_choice_label}" to {gmail.labels} e-mails.')
+                messages = gmail.list_messages_matching_query("me", f"from:{sender}")
+
+                if not messages:
+                    print(f"No messages found from {sender}")
+                    continue
+
                 gmail.labels = 0
+                gmail.attach_label("me", label_id, messages)
+                print(f'Attached the label: "{label_name}" to {gmail.labels} e-mails.')
 
             elif user_choice == 7:
-                '''
-                7. Permanently delete all messages in trash
-                '''
-                for message in tqdm(gmail.list_messages_matching_label('me', 'TRASH')):
-                    gmail.delete_permanent('me', message)
-                    gmail.deleted += 1
-                print(f'Emptied trash. All {gmail.deleted} e-mails have been deleted.')
+                # Permanently delete all trash
+                messages = gmail.list_messages_matching_label("me", "TRASH")
+
+                if not messages:
+                    print("No messages found in trash")
+                    continue
+
+                confirm = input(
+                    f"Found {len(messages)} messages in trash. Permanently delete them? (yes/no): "
+                )
+                if confirm.lower() != "yes":
+                    print("Operation cancelled")
+                    continue
+
                 gmail.deleted = 0
+                for message in tqdm(messages, desc="Permanently deleting messages"):
+                    gmail.delete_permanent("me", message)
+
+                print(
+                    f"Emptied trash. All {gmail.deleted} e-mails have been permanently deleted."
+                )
 
             elif user_choice == 8:
-                '''
-                8. Exit
-                '''
-                sys.exit(1)
+                # Exit
+                print("Exiting Gmail Cleaner. Goodbye!")
+                sys.exit(0)
+
+            else:
+                print("Invalid option! Please try again.")
 
         except ValueError:
-            print('Invalid input! Try again')
+            print("Invalid input! Please enter a number.")
 
-if __name__ == '__main__':
+        except KeyboardInterrupt:
+            print("\nOperation cancelled by user.")
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+
+        input("\nPress Enter to continue...")
+
+
+if __name__ == "__main__":
     main()
-
-
-
-

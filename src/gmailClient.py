@@ -1,53 +1,45 @@
 from __future__ import print_function
+
 import os.path
+
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-# If modifying these scopes, delete the file token.pickle.
-# Set the scope and application name.
+# Constants
+SCOPES = ["https://mail.google.com/"]
+APPLICATION_NAME = "Gmail API Python"
 
-SCOPES = ['https://mail.google.com/']
-APPLICATION_NAME = 'Gmail API Python'
 
-# Deletes all the e-mails sent from a specific adress that us chosen by the user.
-  
 class GmailClient:
+    """Handles authentication and service creation for Gmail API."""
+
     def __init__(self):
-        self.creds = self.get_credentials()
-        self.service = self.service()
-            
+        self.creds = self._get_credentials()
+        self.service = self._create_service()
 
-    def get_credentials(self):
-
+    def _get_credentials(self) -> Credentials:
+        """Get user credentials for Gmail API access."""
         creds = None
-        '''
-        The file token.pickle stores the user's access and refresh tokens, and is
-        created automatically when the authorization flow completes for the first
-        time.
-        '''
 
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        if os.path.exists("token.json"):
+            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
 
-        # If there are no (valid) credentials available, let the user log in.
-        
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    "credentials.json", SCOPES
+                )
                 creds = flow.run_local_server(port=0)
-        
-            # Save the credentials for the next run
-            with open('token.json', 'w') as token:
+
+            with open("token.json", "w") as token:
                 token.write(creds.to_json())
 
         return creds
 
-    # Builds a G-Mail service object.
-
-    def service(self):
-        service = build('gmail', 'v1', credentials=self.creds)
-        return service
+    def _create_service(self):
+        """Build a Gmail service object."""
+        return build("gmail", "v1", credentials=self.creds)

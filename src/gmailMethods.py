@@ -1,316 +1,362 @@
+from typing import Any, Dict, List, Optional
+
 from gmailClient import GmailClient
+
 from tqdm import tqdm
-import sys
 
 
 class GmailMethod:
-	def __init__(self):
-		self.gmailclient = GmailClient()
-		self.users = []	
-		self.users_query = []
-		self.total_from_users = 0
-		self.messages = []
-		self.total_messages = 0
-		self.moved_to_trash = 0
-		self.moved_to_spam = 0
-		self.deleted = 0
-		self.labels = 0
+    """Provides methods for interacting with Gmail."""
 
-	def list_messages(self, user_id):
-		'''
-		Lists all the messages in the user's mailbox.
+    def __init__(self):
+        self.gmailclient = GmailClient()
+        self.users = []
+        self.users_query = []
+        self.total_from_users = 0
+        self.messages = []
+        self.total_messages = 0
+        self.moved_to_trash = 0
+        self.moved_to_spam = 0
+        self.deleted = 0
+        self.labels = 0
 
-		Args:
-			userId: string, The user's email address. The special value
-			`me` can be used to indicate the authenticated user. (required)
+    def list_messages(self, user_id: str) -> List[str]:
+        """
+        Lists all the messages in the user's mailbox.
 
-		Returns:
-  			A list with gmail message objects
-		'''
-		try:
-			messages = []
+        Args:
+            user_id: The user's email address. Special value 'me' indicates the authenticated user.
 
-			response = self.gmailclient.service.users().messages().list(userId="me").execute()
-			if 'messages' in response:
-				for message in response['messages']:
-					self.total_messages += 1
-					messages.append(message['id'])
+        Returns:
+            A list of message IDs
+        """
+        try:
+            messages = []
 
-				while 'nextPageToken' in response:
-					page_token = response['nextPageToken']
-					response = self.gmailclient.service.users().messages().list(
-						userId="me", pageToken=page_token).execute()
-					for message in response['messages']:
-						self.total_messages += 1
-						messages.append(message['id'])
+            response = (
+                self.gmailclient.service.users()
+                .messages()
+                .list(userId=user_id)
+                .execute()
+            )
 
-			return messages
+            if "messages" in response:
+                messages.extend(message["id"] for message in response["messages"])
+                self.total_messages += len(response["messages"])
 
-		except Exception as error:
-			print(f'An error occurred at list_messages: {error}')
+                # Process remaining pages
+                while "nextPageToken" in response:
+                    page_token = response["nextPageToken"]
+                    response = (
+                        self.gmailclient.service.users()
+                        .messages()
+                        .list(userId=user_id, pageToken=page_token)
+                        .execute()
+                    )
 
-	def callback_add_to_messages(self, request_id, response, exception):
-		'''
-		Adds the sender of the returned gmail message object of the get method to the list of messages
+                    if "messages" in response:
+                        messages.extend(
+                            message["id"] for message in response["messages"]
+                        )
+                        self.total_messages += len(response["messages"])
 
-		Args:
-			response: The returned gmail message object.
-			request_id: The unique id of the request. and the second is the deserialized response object.
-			exception: An apiclient.errors.HttpError exception object if an HTTP
-            error occurred while processing the request, or None if no error occurred.
-		'''
-		try:
-			for element in response['payload']['headers']:
-				if element['name'] == 'From':
-					self.users.append(element.get('value'))
+            return messages
 
-		except Exception as error:
-			print(f'An error occurred at callback_add_to_messages: {error}')
+        except Exception as error:
+            print(f"An error occurred at list_messages: {error}")
+            return []
 
-	def batch_get(self, messages):
-		'''
-		Batches single GET requests into one and calls a specified callback function for each.
+    def callback_add_to_messages(self, request_id, response, exception):
+        """
+        Callback function for batch requests that extracts sender information.
 
-			Args:
-			response: The returned gmail message object.
-			request_id: The unique id of the request. and the second is the deserialized response object.
-			exception: An apiclient.errors.HttpError exception object if an HTTP
-            error occurred while processing the request, or None if no error occurred.
-		'''
-		try:
-			for n in tqdm(range(0, len(messages), 100), file=sys.stderr):
+        Args:
+            request_id: Unique ID of the request
+            response: The returned Gmail message object
+            exception: Exception object if an error occurred
+        """
+        if exception:
+            print(f"An error occurred during batch processing: {exception}")
+            return
 
-				batch = self.gmailclient.service.new_batch_http_request()
-				batch_size = 100
+        try:
+            for element in response["payload"]["headers"]:
+                if element["name"] == "From":
+                    self.users.append(element.get("value"))
+        except Exception as error:
+            print(f"An error occurred at callback_add_to_messages: {error}")
 
-				if len(messages) < batch_size:
-					batch_size = len(messages) - 1
+    def batch_get(self, messages: List[str]):
+        """
+        Process messages in batches to extract sender information.
 
-				for x in (range(0, batch_size)):
-					if x > len(messages):
-						break
-					batch.add(self.gmailclient.service.users().messages().get(
-					    userId="me", id=messages[x], fields='payload/headers'), callback=self.callback_add_to_messages)
-				
-				messages = messages[99:len(messages)-1]
+        Args:
+            messages: List of message IDs to process
+        """
+        try:
+            # Process in batches of 100
+            for start_idx in tqdm(
+                range(0, len(messages), 100), desc="Processing messages"
+            ):
+                batch = self.gmailclient.service.new_batch_http_request()
+                end_idx = min(start_idx + 100, len(messages))
 
-				batch.execute()
-				
-		except Exception as error:
-			print(f'An error occurred at batch_get: {error}')
+                for msg_id in messages[start_idx:end_idx]:
+                    batch.add(
+                        self.gmailclient.service.users()
+                        .messages()
+                        .get(userId="me", id=msg_id, fields="payload/headers"),
+                        callback=self.callback_add_to_messages,
+                    )
 
-	def get_user(self, user_id, msg_id):
-		'''
-		!NOT IN USE!
-		Gets the specified message.
+                batch.execute()
 
-		Args:
-			userId: string, The user's email address. The special value
-			`me` can be used to indicate the authenticated user. (required)
-			id: string, The ID of the message to retrieve.
-			fields: string, Specify the fields of the nested response to request. (required)
+        except Exception as error:
+            print(f"An error occurred at batch_get: {error}")
 
-		Returns:
-  			The sender of the response
-		'''
-		try:
-			response = self.gmailclient.service.users().messages().get(
-			    userId="me", id=msg_id, fields='payload/headers').execute()
-			for element in response['payload']['headers']:
-				if element['name'] == "From":
-					return element.get("value")
+    def get_user(self, user_id: str, msg_id: str) -> Optional[str]:
+        """
+        Get the sender of a specific message.
 
-		except Exception as error:
-			print(f'An error occurred at get_user: {error}')
+        Args:
+            user_id: The user's email address
+            msg_id: The message ID
 
-	def list_messages_matching_query(self, user_id, query=''):
-		'''
-		Lists all the messages in the user's mailbox matching the specifed query.
+        Returns:
+            The email address of the sender, or None if not found
+        """
+        try:
+            response = (
+                self.gmailclient.service.users()
+                .messages()
+                .get(userId=user_id, id=msg_id, fields="payload/headers")
+                .execute()
+            )
 
-		Args:
-			userId: string, The user's email address. The special value
-			`me` can be used to indicate the authenticated user. (required)
-			query: string, return messages matching the specified query. (required)
+            for element in response["payload"]["headers"]:
+                if element["name"] == "From":
+                    return element.get("value")
 
-		Returns:
-  			A list with gmail message objects
-		'''
-		try:
-			messages = []
+            return None
+        except Exception as error:
+            print(f"An error occurred at get_user: {error}")
+            return None
 
-			response = self.gmailclient.service.users().messages().list(
-			    userId="me", q=query).execute()
-			if 'messages' in response:
-				for message in response['messages']:
-					messages.append(message['id'])
+    def list_messages_matching_query(self, user_id: str, query: str = "") -> List[str]:
+        """
+        List message IDs matching a specific query.
 
-			while 'nextPageToken' in response:
-				page_token = response['nextPageToken']
-				response = self.gmailclient.service.users().messages().list(
-				    userId="me", q=query, pageToken=page_token).execute()
-				for message in response['messages']:
-					messages.append(message['id'])
+        Args:
+            user_id: The user's email address
+            query: The search query (e.g., 'from:example@gmail.com')
 
-			return messages
+        Returns:
+            A list of message IDs
+        """
+        try:
+            messages = []
 
-		except Exception as error:
-			print(f'An error occurred at list_messages_matching_query: {error}')
+            response = (
+                self.gmailclient.service.users()
+                .messages()
+                .list(userId=user_id, q=query)
+                .execute()
+            )
 
-	def list_messages_matching_label(self, user_id, label_Id):
-		'''
-		Lists all the messages in the user's mailbox matching the specifed label
+            if "messages" in response:
+                messages.extend(message["id"] for message in response["messages"])
 
-		Args:
-			userId: string, The user's email address. The special value
-			`me` can be used to indicate the authenticated user. (required)
-			query: string, return messages matching the specified query. (required)
+                # Process remaining pages
+                while "nextPageToken" in response:
+                    page_token = response["nextPageToken"]
+                    response = (
+                        self.gmailclient.service.users()
+                        .messages()
+                        .list(userId=user_id, q=query, pageToken=page_token)
+                        .execute()
+                    )
 
-		Returns:
-  			A list with gmail message objects
-		'''
-		try:
+                    if "messages" in response:
+                        messages.extend(
+                            message["id"] for message in response["messages"]
+                        )
 
-			messages = []
+            return messages
 
-			response = self.gmailclient.service.users().messages().list(
-			    userId="me", labelIds=label_Id).execute()
-			if 'messages' in response:
-				for message in response['messages']:
-					messages.append(message['id'])
+        except Exception as error:
+            print(f"An error occurred at list_messages_matching_query: {error}")
+            return []
 
-			while 'nextPageToken' in response:
-				page_token = response['nextPageToken']
-				response = self.google_client.service.users().messages().list(
-				    userId="me", labelIds=label_Id, pageToken=page_token).execute()
-				if 'messages' in response:
-					for message in response['messages']:
-						messages.append(message['id'])
+    def list_messages_matching_label(self, user_id: str, label_id: str) -> List[str]:
+        """
+        List message IDs with a specific label.
 
-			return messages
+        Args:
+            user_id: The user's email address
+            label_id: The label ID
 
-		except Exception as error:
-			print(f'An error occurred at list_messages_matching_label: {error}')
+        Returns:
+            A list of message IDs
+        """
+        try:
+            messages = []
 
-	def delete_message(self, user_id, msg_id):
-		'''
-		Moves the specified message to the trash.
-		Args:
-			userId: string, The user's email address. The special value
-			`me` can be used to indicate the authenticated user. (required)
-			msg_id: string, The ID of the message to delete. (required)
-		'''
-		try:
-			response = self.gmailclient.service.users().messages().trash(userId="me", id=msg_id).execute()
+            response = (
+                self.gmailclient.service.users()
+                .messages()
+                .list(userId=user_id, labelIds=label_id)
+                .execute()
+            )
 
-		except Exception as error:
-			print(f'An error occurred at delete_message: {error}')
+            if "messages" in response:
+                messages.extend(message["id"] for message in response["messages"])
 
-	def delete_permanent(self, user_id, msg_id):
-		'''
-		Immediately and permanently deletes the specified message. This operation cannot be undone.		
-		Args:
-			userId: string, The user's email address. The special value 
-			`me` can be used to indicate the authenticated user. (required)
-			msg_id: string, The ID of the message to delete. (required)
-		'''
-		try:
-			response = self.gmailclient.service.users().messages().delete(userId="me", id=msg_id).execute()
-			return response
+                # Process remaining pages
+                while "nextPageToken" in response:
+                    page_token = response["nextPageToken"]
+                    response = (
+                        self.gmailclient.service.users()
+                        .messages()
+                        .list(userId=user_id, labelIds=label_id, pageToken=page_token)
+                        .execute()
+                    )
 
-		except Exception as error:
-			print(f'An error occurred at delete_permanent: {error}')
+                    if "messages" in response:
+                        messages.extend(
+                            message["id"] for message in response["messages"]
+                        )
 
-	def create_label(self, user_id, label_name):
-		'''
-		Creates a new label.
-		Args:
-			userId: string, The user's email address. The special value 
-			`me` can be used to indicate the authenticated user. (required)
-			body: object, The request body. (required)
-		Returns: An object whose body contains an instance of label.
-		'''
-		try:
-			response = self.gmailclient.service.users().labels().create(body={
-				"name": label_name,
-				"messageListVisibility": "SHOW",
-				"labelListVisibility": "LABEL_SHOW",
-				"type": "USER"
-				}, userId="me").execute()
-			return response
+            return messages
 
-		except Exception as error:
-			print(f'An error occurred at create_label: {error}')
+        except Exception as error:
+            print(f"An error occurred at list_messages_matching_label: {error}")
+            return []
 
-	def move_to_spam(self, user_id, message_ids):
-		'''
-		Adds the specfied message to spam.
-		Args:
-			userId: string, The user's email address. The special value 
-			`me` can be used to indicate the authenticated user. (required)
-			message_ids: list, A list of message(-id's) which should be marked as spam. (required)
-		'''
-		try:
-			response = self.gmailclient.service.users().messages().batchModify(
-				userId = 'me',
-				body = {'addLabelIds': ['SPAM'],
-						'ids': [message_ids]}).execute()
+    def delete_message(self, user_id: str, msg_id: str) -> None:
+        """
+        Move a message to trash.
 
-			return response
+        Args:
+            user_id: The user's email address
+            msg_id: The message ID
+        """
+        try:
+            self.gmailclient.service.users().messages().trash(
+                userId=user_id, id=msg_id
+            ).execute()
+            self.moved_to_trash += 1
+        except Exception as error:
+            print(f"An error occurred at delete_message: {error}")
 
-		except Exception as error:
-			print(f'An error occurred at move_to_spam: {error}')
+    def delete_permanent(self, user_id: str, msg_id: str) -> None:
+        """
+        Permanently delete a message.
 
-	def list_labels(self, user_id):
-		'''
-		Create a list with all the users labels.
-		Args:
-			userId: string, The user's email address. The special value 
-			`me` can be used to indicate the authenticated user. (required)
-		'''
-		try:
-			response = self.gmailclient.service.users().labels().list(userId="me").execute()
-			labels = response.get('labels', [])
-			return labels
+        Args:
+            user_id: The user's email address
+            msg_id: The message ID
+        """
+        try:
+            self.gmailclient.service.users().messages().delete(
+                userId=user_id, id=msg_id
+            ).execute()
+            self.deleted += 1
+        except Exception as error:
+            print(f"An error occurred at delete_permanent: {error}")
 
-		except Exception as error:
-			print(f'An error occurred at list_labels: {error}')
+    def move_to_spam(self, user_id: str, msg_id: str) -> None:
+        """
+        Move a message to spam.
 
-	def label_check(self, labels, label_name):
-		'''
-		Check if the given label exists.
-		Args:
-			labels: list. A list of all the users labels. (required)
-			label_name: string. The name of the label whose existence is to be checked. (required)
+        Args:
+            user_id: The user's email address
+            msg_id: The message ID
+        """
+        try:
+            self.gmailclient.service.users().messages().batchModify(
+                userId=user_id, body={"addLabelIds": ["SPAM"], "ids": [msg_id]}
+            ).execute()
+            self.moved_to_spam += 1
+        except Exception as error:
+            print(f"An error occurred at move_to_spam: {error}")
 
-		Returns:
-			boolean.
-		'''
-		try:
-			for label in labels:
-				if label['name'] == label_name:
-					return True
+    def list_labels(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        List all available labels.
 
-		except Exception as error:
-			print(f'An error occurred at label_check: {error}')
+        Args:
+            user_id: The user's email address
 
-	def attach_label(self, user_id, label_Id, message_ids):
-		'''
-		Attach a label to a message.
-		Args:
-			userId: string, The user's email address. The special value 
-			`me` can be used to indicate the authenticated user. (required)
-			label_name: string. The name of the label that is to be attached.
-			message_ids: list. A list of message id's.
-		'''
-		try:
-			response = self.gmailclient.service.users().messages().batchModify(
-				userId = 'me',
-				body = {'addLabelIds': [label_Id],
-						'ids': [message_ids]}).execute()
+        Returns:
+            A list of label objects
+        """
+        try:
+            response = (
+                self.gmailclient.service.users().labels().list(userId=user_id).execute()
+            )
+            return response.get("labels", [])
+        except Exception as error:
+            print(f"An error occurred at list_labels: {error}")
+            return []
 
-		except Exception as error:
-			print(f'An error occurred at attach_label: {error}')
+    def create_label(self, user_id: str, label_name: str) -> Dict[str, Any]:
+        """
+        Create a new label.
 
+        Args:
+            user_id: The user's email address
+            label_name: The name for the new label
 
+        Returns:
+            The created label object
+        """
+        try:
+            response = (
+                self.gmailclient.service.users()
+                .labels()
+                .create(
+                    userId=user_id,
+                    body={
+                        "name": label_name,
+                        "messageListVisibility": "SHOW",
+                        "labelListVisibility": "LABEL_SHOW",
+                        "type": "USER",
+                    },
+                )
+                .execute()
+            )
+            return response
+        except Exception as error:
+            print(f"An error occurred at create_label: {error}")
+            return {}
 
+    def label_check(self, labels: List[Dict[str, Any]], label_name: str) -> bool:
+        """
+        Check if a label exists.
 
+        Args:
+            labels: List of label objects
+            label_name: The label name to check
+
+        Returns:
+            True if the label exists, False otherwise
+        """
+        return any(label["name"] == label_name for label in labels)
+
+    def attach_label(self, user_id: str, label_id: str, message_ids: List[str]) -> None:
+        """
+        Attach a label to messages.
+
+        Args:
+            user_id: The user's email address
+            label_id: The label ID
+            message_ids: List of message IDs
+        """
+        try:
+            self.gmailclient.service.users().messages().batchModify(
+                userId=user_id, body={"addLabelIds": [label_id], "ids": message_ids}
+            ).execute()
+
+            self.labels += len(message_ids)
+        except Exception as error:
+            print(f"An error occurred at attach_label: {error}")
