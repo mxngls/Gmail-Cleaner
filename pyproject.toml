@@ -9,4 +9,5 @@ dependencies = [
     "google-auth-oauthlib",
     "google-auth",
     "tqdm",
+    "ruff>=0.9.9",
 ]
