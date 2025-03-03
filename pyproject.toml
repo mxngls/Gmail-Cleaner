@@ -1,0 +1,12 @@
+[project]
+name = "gmail-cleaner"
+version = "0.1.0"
+description = "Clean up your Gmail inbox."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth",
+    "tqdm",
+]
