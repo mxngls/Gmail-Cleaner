@@ -19,8 +19,7 @@ def main():
 4. Move all messages from the spam to the trash folder
 5. Move messages matching a specific label to trash
 6. Add a label to emails matching a specifed sender
-7. Permanently delete all messages in trash
-8. Exit
+7. Exit
         """)
 
         try:
@@ -156,29 +155,6 @@ def main():
                 print(f'Attached the label: "{label_name}" to {gmail.labels} e-mails.')
 
             elif user_choice == 7:
-                # Permanently delete all trash
-                messages = gmail.list_messages_matching_label("me", "TRASH")
-
-                if not messages:
-                    print("No messages found in trash")
-                    continue
-
-                confirm = input(
-                    f"Found {len(messages)} messages in trash. Permanently delete them? (yes/no): "
-                )
-                if confirm.lower() != "yes":
-                    print("Operation cancelled")
-                    continue
-
-                gmail.deleted = 0
-                for message in tqdm(messages, desc="Permanently deleting messages"):
-                    gmail.delete_permanent("me", message)
-
-                print(
-                    f"Emptied trash. All {gmail.deleted} e-mails have been permanently deleted."
-                )
-
-            elif user_choice == 8:
                 # Exit
                 print("Exiting Gmail Cleaner. Goodbye!")
                 sys.exit(0)

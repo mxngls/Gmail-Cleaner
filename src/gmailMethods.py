@@ -248,22 +248,6 @@ class GmailMethod:
         except Exception as error:
             print(f"An error occurred at delete_message: {error}")
 
-    def delete_permanent(self, user_id: str, msg_id: str) -> None:
-        """
-        Permanently delete a message.
-
-        Args:
-            user_id: The user's email address
-            msg_id: The message ID
-        """
-        try:
-            self.gmailclient.service.users().messages().delete(
-                userId=user_id, id=msg_id
-            ).execute()
-            self.deleted += 1
-        except Exception as error:
-            print(f"An error occurred at delete_permanent: {error}")
-
     def move_to_spam(self, user_id: str, msg_id: str) -> None:
         """
         Move a message to spam.
