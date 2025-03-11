@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tqdm import tqdm
 
-from gmailClient import GmailClient
+from client import GmailClient
 
 # fmt: off
 # https://developers.google.com/gmail/api/reference/quota#per-method_quota_usage

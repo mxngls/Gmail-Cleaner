@@ -2,7 +2,7 @@ import re
 import sys
 from collections import Counter
 
-from gmailMethods import GmailMethod
+from methods import GmailMethod
 
 
 def main():
