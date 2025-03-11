@@ -1,5 +1,8 @@
+import random
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from googleapiclient.errors import HttpError
 from tqdm import tqdm
 
 from client import GmailClient
@@ -211,12 +214,11 @@ class GmailMethod:
 
     def batch_process(self, items: List[str], operation: str, **kwargs):
         """
-        Generic batch processing function for Gmail API operations.
+        Generic batch processing function for Gmail API operations with exponential backoff.
 
         Args:
             items: List of IDs or items to process
             operation: Operation type ('trash', 'spam', 'label', 'get')
-            batch_size: Batch size for this operation type (if None, uses default for operation)
             **kwargs: Additional arguments needed for specific operations
                 - user_id: The user's email address (default 'me')
                 - label_id: The label ID (for 'label' operation)
@@ -238,93 +240,139 @@ class GmailMethod:
         user_id = kwargs.get("user_id", "me")
         processed_count = 0
 
-        try:
-            # Define operation-specific configurations
-            operations = {
-                "trash": {
-                    "create_request": lambda item_id: self.gmailclient.service.users()
-                    .messages()
-                    .trash(userId=user_id, id=item_id),
-                    "callback": lambda req_id, resp, exc: self._generic_callback(
-                        req_id, resp, exc, "trash"
-                    ),
-                    "uses_batch_http": False,
-                    "desc": "Moving to trash",
-                },
-                "spam": {
-                    "process_batch": lambda batch: self.gmailclient.service.users()
-                    .messages()
-                    .batchModify(
-                        userId=user_id, body={"addLabelIds": ["SPAM"], "ids": batch}
-                    )
-                    .execute(),
-                    "uses_batch_http": True,
-                    "desc": "Moving to spam",
-                    "counter": "moved_to_spam",
-                },
-                "label": {
-                    "process_batch": lambda batch: self.gmailclient.service.users()
-                    .messages()
-                    .batchModify(
-                        userId=user_id,
-                        body={"addLabelIds": [kwargs.get("label_id")], "ids": batch},
-                    )
-                    .execute(),
-                    "uses_batch_http": True,
-                    "desc": "Applying label",
-                    "counter": "labels",
-                },
-                "get": {
-                    "create_request": lambda item_id: self.gmailclient.service.users()
-                    .messages()
-                    .get(userId=user_id, id=item_id, format="metadata"),
-                    "callback": self.get_sender,
-                    "uses_batch_http": False,
-                    "desc": "Getting messages",
-                },
-            }
+        # Define operation-specific configurations
+        operations = {
+            "trash": {
+                "process_batch": lambda batch: self.gmailclient.service.users()
+                .messages()
+                .batchModify(
+                    userId=user_id, body={"addLabelIds": ["TRASH"], "ids": batch}
+                )
+                .execute(),
+                "uses_batch_http": True,
+                "desc": "Moving to trash",
+                "counter": "moved_to_trash",
+            },
+            "spam": {
+                "process_batch": lambda batch: self.gmailclient.service.users()
+                .messages()
+                .batchModify(
+                    userId=user_id, body={"addLabelIds": ["SPAM"], "ids": batch}
+                )
+                .execute(),
+                "uses_batch_http": True,
+                "desc": "Moving to spam",
+                "counter": "moved_to_spam",
+            },
+            "label": {
+                "process_batch": lambda batch: self.gmailclient.service.users()
+                .messages()
+                .batchModify(
+                    userId=user_id,
+                    body={"addLabelIds": [kwargs.get("label_id")], "ids": batch},
+                )
+                .execute(),
+                "uses_batch_http": True,
+                "desc": "Applying label",
+                "counter": "labels",
+            },
+            "get": {
+                "create_request": lambda item_id: self.gmailclient.service.users()
+                .messages()
+                .get(userId=user_id, id=item_id, format="metadata"),
+                "callback": self.get_sender,
+                "uses_batch_http": False,
+                "desc": "Getting messages",
+            },
+        }
 
-            if operation not in operations:
-                raise ValueError(f"Unsupported operation: {operation}")
+        if operation not in operations:
+            raise ValueError(f"Unsupported operation: {operation}")
 
-            op_config = operations[operation]
+        op_config = operations[operation]
 
-            # Process in batches with progress tracking
-            for start_idx in tqdm(
-                range(0, len(items), batch_size - 1),
-                desc=op_config["desc"],
-                unit="batch",
-            ):
-                end_idx = min(start_idx + batch_size, len(items))
-                batch_items = items[start_idx:end_idx]
+        # Process in batches with progress tracking
+        pbar = tqdm(
+            range(0, len(items), batch_size),
+            desc=op_config["desc"],
+            unit="batch",
+        )
 
-                if op_config.get("uses_batch_http", True):
-                    op_config["process_batch"](batch_items)
-                    processed_count += len(batch_items)
+        for start_idx in pbar:
+            end_idx = min(start_idx + batch_size, len(items))
+            batch_items = items[start_idx:end_idx]
 
-                    counter_name = op_config.get("counter")
-                    if counter_name and hasattr(self, counter_name):
-                        setattr(
-                            self,
-                            counter_name,
-                            getattr(self, counter_name) + len(batch_items),
+            # Implement exponential backoff
+            max_retries = 5
+            retry_count = 0
+            wait_time = 1  # Initial wait time in seconds
+
+            while retry_count <= max_retries:
+                try:
+                    if op_config.get("uses_batch_http", True):
+                        op_config["process_batch"](batch_items)
+                        processed_count += len(batch_items)
+
+                        counter_name = op_config.get("counter")
+                        if counter_name and hasattr(self, counter_name):
+                            setattr(
+                                self,
+                                counter_name,
+                                getattr(self, counter_name) + len(batch_items),
+                            )
+                    else:
+                        batch = self.gmailclient.service.new_batch_http_request(
+                            callback=op_config.get("callback")
                         )
-                else:
-                    batch = self.gmailclient.service.new_batch_http_request(
-                        callback=op_config.get("callback")
-                    )
 
-                    for item_id in batch_items:
-                        batch.add(
-                            op_config["create_request"](item_id), request_id=item_id
+                        for item_id in batch_items:
+                            batch.add(
+                                op_config["create_request"](item_id), request_id=item_id
+                            )
+
+                        batch.execute()
+
+                    # Success, break out of retry loop
+                    break
+
+                except HttpError as error:
+                    if error.resp.status == 429 or (500 <= error.resp.status < 600):
+                        retry_count += 1
+
+                        if retry_count > max_retries:
+                            print(
+                                f"Maximum retries exceeded for batch starting at {start_idx}"
+                            )
+                            break
+
+                        # Calculate wait time with jitter
+                        jitter = random.uniform(0.5, 1.5)
+                        sleep_time = wait_time * jitter
+
+                        print(
+                            f"Rate limit exceeded, retrying in {sleep_time:.2f} seconds (attempt {retry_count}/{max_retries})"
+                        )
+                        pbar.set_postfix(
+                            {"status": f"Rate limited, retry {retry_count}"}
                         )
 
-                    batch.execute()
+                        time.sleep(sleep_time)
 
-        except Exception as error:
-            print(f"An error occurred during batch processing ({operation}): {error}")
+                        # Exponential backoff
+                        wait_time *= 2
+                    else:
+                        # If it's not a rate limit or server error, don't retry
+                        print(
+                            f"Error during {operation} (HTTP {error.resp.status}): {error}"
+                        )
+                        break
+                except Exception as error:
+                    print(
+                        f"An error occurred during batch processing ({operation}): {error}"
+                    )
+                    break
 
-        return
+        return processed_count
 
     def batch_get(self, messages: List[str], user_id: str = "me"):
         """
