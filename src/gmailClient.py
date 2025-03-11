@@ -8,7 +8,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 # Constants
-SCOPES = ["https://mail.google.com/"]
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 APPLICATION_NAME = "Gmail API Python"
 
 
